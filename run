@@ -1,0 +1,65 @@
+#!/bin/sh
+
+APP_ROOT=`pwd`
+GIT_REV=`git rev-parse --verify HEAD`
+USER=`whoami`+dev
+NODE_VERSION=v0.10.24
+PATH=${PATH}:${APP_ROOT}/vendor/nvm/${NODE_VERSION}/bin
+export PATH
+
+buildCommon() {
+  if [[ `node --version` != ${NODE_VERSION} ]]; then
+    git submodule init; git submodule update
+    . ${APP_ROOT}/vendor/nvm/nvm.sh; nvm install ${NODE_VERSION}
+  fi
+}
+
+buildProduction() {
+  NODE_ENV=production APP_ROOT=${APP_ROOT} GIT_REV=${GIT_REV} node config/build/webBuild.js
+}
+
+
+case $1 in
+  'lint' )
+    find . -type f -a -path '*.js' -a ! -path './web/*' -a ! -path './web-build/*' -a ! -path './node_modules/*' -a ! -path './vendor/*' -exec ./node_modules/.bin/jshint {} --config config/build/jshint.config.json \;
+    find web -type f -a -path '*.js' -a ! -path 'web/css/*' -a ! -path 'web/images/*' -a ! -path 'web/bower_components/*' -exec ./node_modules/.bin/jshint {} --config config/build/jshint.config.web.json \;
+    ;;
+
+  'test' )
+    NODE_ENV=test APP_ROOT=${APP_ROOT} ${APP_ROOT}/node_modules/.bin/mocha -r blanket --recursive --check-leaks -R list
+    ;;
+
+  'test-coverage' )
+    NODE_ENV=test APP_ROOT=${APP_ROOT} NAMER_COVERAGE=1 ${APP_ROOT}/node_modules/.bin/mocha -r blanket --recursive --check-leaks --reporter mocha-lcov-reporter | ${APP_ROOT}/node_modules/coveralls/bin/coveralls.js
+    ;;
+
+
+  'build' )
+    buildProduction
+    ;;
+
+  'development' )
+    buildCommon
+    NODE_ENV=development APP_ROOT=${APP_ROOT} USER=${USER} node app/server.js
+    ;;
+
+  'production' )
+    buildCommon
+    buildProduction
+
+    NODE_ENV=production APP_ROOT=${APP_ROOT} GIT_REV=${GIT_REV} ./node_modules/forever/bin/forever stop app/server.js
+    NODE_ENV=production APP_ROOT=${APP_ROOT} GIT_REV=${GIT_REV} ./node_modules/forever/bin/forever start -l /service/log/forever.log -o /service/log/app.log -e /service/log/app-stderr.log -p /service/tmp --append app/server.js
+    ;;
+
+  'production-test' )
+    buildCommon
+    buildProduction
+
+    NODE_ENV=production APP_ROOT=${APP_ROOT} GIT_REV=${GIT_REV} USER=${USER} node app/server.js
+    ;;
+
+
+  * )
+    echo 'What?'
+    ;;
+esac
